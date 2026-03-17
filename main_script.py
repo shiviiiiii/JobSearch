@@ -5,7 +5,6 @@ import json
 import time
 import fitz  # PyMuPDF
 import gspread
-import pandas as pd
 import requests
 from google.oauth2.service_account import Credentials
 from sentence_transformers import SentenceTransformer, util
@@ -14,7 +13,7 @@ from geopy.geocoders import Nominatim
 from geopy.distance import geodesic
 from datetime import datetime
 
-# --- 1. SETUP ---
+# --- 1. AUTH & AI SETUP ---
 def get_google_client():
     secret_json = os.getenv('GOOGLE_SHEET_CREDENTIALS')
     creds_dict = json.loads(secret_json)
@@ -27,137 +26,106 @@ def calculate_match(resume_text, job_blob):
     embeddings = model.encode([resume_text, job_blob], convert_to_tensor=True)
     return round(float(util.cos_sim(embeddings[0], embeddings[1])) * 100, 2)
 
-# EXPANDED SEARCH: Includes Engineer, Assistant, Support, and Lead roles
-SEARCH_TERMS = [
-    'data analyst', 'junior data analyst', 'data engineer', 
-    'data assistant', 'data support', 'business intelligence',
-    'insight analyst', 'reporting analyst', 'data manager'
-]
-
-# --- 2. FETCHERS ---
-def fetch_adzuna():
+# --- 2. FETCHERS (ADZUNA + LINKEDIN) ---
+def fetch_adzuna(terms):
     APP_ID = os.getenv('ADZUNA_APP_ID')
     APP_KEY = os.getenv('ADZUNA_APP_KEY')
-    
-    if not APP_ID or not APP_KEY:
-        print("❌ ADZUNA ERROR: App ID or Key is missing from GitHub Secrets!")
-        return []
-    
-    all_adzuna = []
-    for term in SEARCH_TERMS:
+    all_adz = []
+    for term in terms:
         print(f"🛰️ Adzuna: Searching '{term}'...")
-        # Adzuna API v1 URL
         url = "https://api.adzuna.com/v1/api/jobs/gb/search/1"
-        params = {
-            'app_id': APP_ID, 
-            'app_key': APP_KEY, 
-            'results_per_page': 20, 
-            'what': term, 
-            'where': 'UK',
-            'content-type': 'application/json'
-        }
+        params = {'app_id': APP_ID, 'app_key': APP_KEY, 'results_per_page': 25, 'what': term, 'where': 'UK'}
         try:
-            r = requests.get(url, params=params, timeout=15)
-            if r.status_code != 200:
-                print(f"⚠️ Adzuna API returned status {r.status_code}")
-                continue
-            
-            data = r.json().get('results', [])
-            print(f"🔍 Found {len(data)} Adzuna results for '{term}'")
-            
-            for j in data:
-                all_adzuna.append({
-                    'title': j.get('title'),
-                    'company': j.get('company', {}).get('display_name'),
-                    'location': j.get('location', {}).get('display_name'),
-                    'description': j.get('description'),
-                    'url': j.get('redirect_url'),
-                    'source': 'Adzuna'
+            r = requests.get(url, params=params, timeout=10)
+            for j in r.json().get('results', []):
+                all_adz.append({
+                    'title': j.get('title'), 'company': j.get('company', {}).get('display_name'),
+                    'location': j.get('location', {}).get('display_name'), 'desc': j.get('description'),
+                    'url': j.get('redirect_url'), 'source': 'Adzuna'
                 })
-            time.sleep(1) # Rate limiting protection
-        except Exception as e:
-            print(f"❌ Adzuna Request Failed: {e}")
-    return all_adzuna
+        except: continue
+    return all_adz
 
-def fetch_linkedin():
+def fetch_linkedin(terms):
     all_li = []
-    for term in SEARCH_TERMS:
+    for term in terms:
         print(f"🛰️ LinkedIn: Scraping '{term}'...")
         try:
-            # results_wanted=20 per term to avoid getting blocked
-            df = scrape_jobs(
-                site_name=["linkedin"],
-                search_term=term,
-                location="United Kingdom",
-                results_wanted=20, 
-                hours_old=72,
-                linkedin_fetch_description=True
-            )
+            df = scrape_jobs(site_name=["linkedin"], search_term=term, location="United Kingdom", results_wanted=15, hours_old=72, linkedin_fetch_description=True)
             for _, row in df.iterrows():
                 all_li.append({
-                    'title': row['title'], 
-                    'company': row['company'], 
-                    'location': row['location'],
-                    'description': row['description'], 
-                    'url': row['job_url'], 
-                    'source': 'LinkedIn'
+                    'title': row['title'], 'company': row['company'], 'location': row['location'],
+                    'desc': row['description'], 'url': row['job_url'], 'source': 'LinkedIn'
                 })
             time.sleep(5)
         except: continue
     return all_li
 
-# --- 3. MAIN ---
+# --- 3. THE "STRICT ALIGNMENT" ENGINE ---
 def main():
+    # Load Resume
     with fitz.open("resume.pdf") as doc:
         resume_text = "".join([p.get_text() for p in doc])
 
+    # Connect to Sheet
     client = get_google_client()
     sheet = client.open('JobTracker_2026').sheet1
     
-    existing_records = sheet.get_all_values()
-    existing_urls = set([row[6] for row in existing_records if len(row) > 6])
+    # Get Existing Data to avoid dupes
+    existing_data = sheet.get_all_values()
+    existing_urls = set([row[6] for row in existing_data if len(row) > 6])
 
-    # Fetch from both sources
-    adz_data = fetch_adzuna()
-    li_data = fetch_linkedin()
+    # Fetch All Data Related Roles
+    terms = ['data analyst', 'data engineer', 'data assistant', 'business intelligence', 'reporting analyst']
+    raw_jobs = fetch_adzuna(terms) + fetch_linkedin(terms)
     
-    print(f"📊 SUMMARY: Adzuna found {len(adz_data)} | LinkedIn found {len(li_data)}")
-    
-    all_found = adz_data + li_data
-    
-    geolocator = Nominatim(user_agent="norwich_job_bot_2026")
-    norwich_coords = (52.6289, 1.2933)
+    # Geocoder setup (Specific to Norwich, UK)
+    geolocator = Nominatim(user_agent="norwich_data_hunter_2026")
+    home_coords = (52.6289, 1.2933) # Norwich, UK
     today = datetime.now().strftime('%Y-%m-%d')
     
-    new_rows = []
-    local_seen_urls = set()
+    final_upload_batch = []
+    seen_in_run = set()
 
-    for j in all_found:
-        url = j['url']
-        if url in existing_urls or url in local_seen_urls:
+    print(f"🧠 Aligning {len(raw_jobs)} jobs to columns...")
+    for j in raw_jobs:
+        if j['url'] in existing_urls or j['url'] in seen_in_run:
             continue
-        local_seen_urls.add(url)
+        seen_in_run.add(j['url'])
 
-        # NO FILTERING: All seniority levels allowed
-        score = calculate_match(resume_text, f"{j['title']} {j['description']}")
+        # Calculate Score
+        score = calculate_match(resume_text, f"{j['title']} {j['desc']}")
         
-        dist_str = "N/A"
+        # Calculate Distance (Cleaned for common UK location strings)
+        dist_val = "Unknown"
         try:
-            city = str(j['location']).split(',')[0].replace("Area", "").strip()
-            loc = geolocator.geocode(f"{city}, UK", timeout=2)
-            if loc:
-                dist_str = f"{round(geodesic(norwich_coords, (loc.latitude, loc.longitude)).miles, 1)} miles"
-            time.sleep(1)
+            clean_loc = str(j['location']).split(',')[0].replace("Area", "").strip() + ", UK"
+            loc_data = geolocator.geocode(clean_loc, timeout=3)
+            if loc_data:
+                d = geodesic(home_coords, (loc_data.latitude, loc_data.longitude)).miles
+                dist_val = f"{round(d, 1)} miles"
         except: pass
 
-        new_rows.append([score, j['title'], j['company'], j['location'], dist_str, today, url, j['source']])
+        # --- THE FIX: FORCED COLUMN MAPPING ---
+        # We create a list with exactly 8 items. No more, no less.
+        row_to_upload = [
+            score,                      # Col A: Score
+            str(j['title'])[:100],      # Col B: Title
+            str(j['company']),          # Col C: Company
+            str(j['location']),         # Col D: Location
+            dist_val,                   # Col E: Distance
+            today,                      # Col F: Date Found
+            str(j['url']),              # Col G: Link
+            str(j['source'])            # Col H: Source
+        ]
+        final_upload_batch.append(row_to_upload)
 
-    if new_rows:
-        new_rows.sort(key=lambda x: x[0], reverse=True)
-        sheet.append_rows(new_rows)
-        print(f"🚀 Success! Added {len(new_rows)} NEW jobs (including High Level).")
+    if final_upload_batch:
+        final_upload_batch.sort(key=lambda x: x[0], reverse=True)
+        sheet.append_rows(final_upload_batch)
+        print(f"🚀 Success! Perfectly aligned {len(final_upload_batch)} jobs.")
     else:
-        print("📭 No new jobs found this time.")
+        print("📭 No new jobs to add.")
 
 if __name__ == "__main__":
     main()
