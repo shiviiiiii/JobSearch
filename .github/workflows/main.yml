@@ -1,13 +1,15 @@
 name: Job Search Automation
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:        # Allows manual "Run" button
+  schedule:
+    - cron: '0 8 * * *'     # 🚀 Auto-runs every day at 8:00 AM UTC
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout Code
         uses: actions/checkout@v4
 
       - name: Set up Python
@@ -16,12 +18,13 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: Install
+      - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
+          # Ensure all necessary libraries are installed
+          pip install pandas requests gspread google-auth jobspy sentence-transformers torch geopy PyMuPDF
 
-      - name: Run
+      - name: Run Scraper
         env:
           GOOGLE_SHEET_CREDENTIALS: ${{ secrets.GOOGLE_SHEET_CREDENTIALS }}
           ADZUNA_APP_ID: ${{ secrets.ADZUNA_APP_ID }}
