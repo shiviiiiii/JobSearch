@@ -3,14 +3,13 @@ import os
 import sys
 import subprocess
 
-# --- EMERGENCY FORCE INSTALL ---
-# This ensures jobspy is installed in the ACTIVE environment at runtime
+# --- THE EXPERT FIX ---
 try:
     from jobspy import scrape_jobs
 except ImportError:
-    print("📦 Jobspy not found. Force installing now...")
     subprocess.check_call([sys.executable, "-m", "pip", "install", "python-jobspy"])
     from jobspy import scrape_jobs
+
 import json
 import time
 import fitz  # PyMuPDF
