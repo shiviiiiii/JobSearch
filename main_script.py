@@ -47,7 +47,7 @@ def classify_job(title, desc):
     
     return level, env
 
-SEARCH_TERMS = ['data analyst', 'junior data analyst', 'data engineer', 'business intelligence', 'reporting analyst']
+SEARCH_TERMS = ['data analyst', 'junior data analyst', 'data engineer', 'business intelligence', 'reporting analyst', 'data']
 
 # --- 2. FETCHERS ---
 def fetch_adzuna():
@@ -57,7 +57,7 @@ def fetch_adzuna():
     results = []
     for term in SEARCH_TERMS:
         url = "https://api.adzuna.com/v1/api/jobs/gb/search/1"
-        params = {'app_id': APP_ID, 'app_key': APP_KEY, 'results_per_page': 25, 'what': term, 'where': 'UK'}
+        params = {'app_id': APP_ID, 'app_key': APP_KEY, 'results_per_page': 50, 'what': term, 'where': 'UK'}
         try:
             r = requests.get(url, params=params, timeout=10).json().get('results', [])
             for j in r:
@@ -76,7 +76,7 @@ def fetch_linkedin():
     for term in SEARCH_TERMS:
         try:
             df = scrape_jobs(site_name=["linkedin"], search_term=term, location="United Kingdom", 
-                             results_wanted=15, hours_old=72, linkedin_fetch_description=True)
+                             results_wanted=50, hours_old=72, linkedin_fetch_description=True)
             for _, row in df.iterrows():
                 level, env = classify_job(row.get('title', ''), row.get('description', ''))
                 results.append({
