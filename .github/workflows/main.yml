@@ -16,7 +16,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          # This is the speed fix! It caches your pip dependencies.
           cache: 'pip'
 
       - name: Install and Run
@@ -26,8 +25,7 @@ jobs:
           ADZUNA_APP_KEY: ${{ secrets.ADZUNA_APP_KEY }}
         run: |
           python -m pip install --upgrade pip
-          # We list them all here. The first time will take a few minutes, 
-          # but every run after that will be super fast.
-          pip install pandas requests gspread google-auth python-jobspy sentence-transformers torch geopy PyMuPDF
+          # Light libraries only - this will be super fast!
+          pip install pandas requests gspread google-auth python-jobspy geopy
           
           python main_script.py
