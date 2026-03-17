@@ -97,58 +97,62 @@ def fetch_linkedin():
     return results
 
 # --- 3. MAIN ENGINE ---
+# --- 3. MAIN ENGINE ---
 def main():
     print("📄 Reading Resume...")
     with fitz.open("resume.pdf") as doc:
         resume_text = "".join([p.get_text() for p in doc])
 
     client = get_google_client()
-    # Change this to your exact sheet name
-    sheet = client.open('JobSearch').sheet1 
+    sheet = client.open('JobSearch').sheet1 # Ensure this matches your Sheet name
     
     existing = sheet.get_all_values()
-    existing_urls = set([row[6] for row in existing if len(row) > 6])
+    # Headers updated: "Distance" is gone
+    if not existing:
+        headers = ["Score", "Title", "Company", "Location", "Date Found", "Link", "Source", "Environment", "Seniority", "Deadline"]
+        sheet.append_row(headers)
+        existing_urls = set()
+    else:
+        # Link is now at index 5 because Distance was removed
+        existing_urls = set([row[5] for row in existing if len(row) > 5])
 
-    print("🔍 Fetching Adzuna...")
-    adzuna_jobs = fetch_adzuna()
-    print("🔍 Fetching LinkedIn...")
-    linkedin_jobs = fetch_linkedin()
+    print("🔍 Fetching Jobs...")
+    # Using your fetchers
+    all_jobs = fetch_adzuna() + fetch_linkedin()
     
-    all_jobs = adzuna_jobs + linkedin_jobs
-    geolocator = Nominatim(user_agent="job_bot_2026")
-    home_coords = (52.6289, 1.2933)
     today = datetime.now().strftime('%Y-%m-%d')
-    
     upload_batch = []
     seen_urls = set()
 
-    print(f"🧠 Processing {len(all_jobs)} jobs with AI...")
+    print(f"🧠 Scoring {len(all_jobs)} jobs...")
     for j in all_jobs:
         url = j.get('url') or j.get('job_url')
         if url in existing_urls or url in seen_urls: continue
         seen_urls.add(url)
 
+        # AI Scoring
         score = calculate_match(resume_text, f"{j['title']} {j['desc']}")
         
-        # Only process distance for high-score jobs to save time!
-        dist = "N/A"
-        if score > 50:
-            try:
-                loc = geolocator.geocode(f"{str(j['location']).split(',')[0]}, UK", timeout=2)
-                if loc:
-                    dist = f"{round(geodesic(home_coords, (loc.latitude, loc.longitude)).miles, 1)}m"
-            except: pass
-
+        # Mapping to 10 columns (Distance removed)
         upload_batch.append([
-            score, j['title'], j['company'], j['location'], 
-            dist, today, url, j['source'], 
-            j['env'], j['level'], 'NIL'
+            score, 
+            j['title'], 
+            j['company'], 
+            j['location'], 
+            today, 
+            url, 
+            j['source'], 
+            j['env'], 
+            j['level'], 
+            'NIL'
         ])
 
     if upload_batch:
         upload_batch.sort(key=lambda x: x[0], reverse=True)
         sheet.append_rows(upload_batch)
-        print(f"🚀 Success! {len(upload_batch)} jobs added.")
+        print(f"🚀 Success! {len(upload_batch)} jobs added to Google Sheets.")
+    else:
+        print("Check: No new unique jobs found this time.")
 
 if __name__ == "__main__":
     main()
