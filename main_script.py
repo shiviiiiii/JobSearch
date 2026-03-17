@@ -1,4 +1,3 @@
-
 import os
 import sys
 import subprocess
@@ -11,8 +10,6 @@ except ImportError:
     from jobspy import scrape_jobs
 
 import json
-import time
-import fitz  # PyMuPDF
 import time
 import fitz  # PyMuPDF
 import gspread
@@ -37,29 +34,26 @@ def calculate_match(resume_text, job_blob):
     embeddings = model.encode([resume_text, job_blob], convert_to_tensor=True)
     return round(float(util.cos_sim(embeddings[0], embeddings[1])) * 100, 2)
 
-# EXPERT CLASSIFICATION ENGINE
 def classify_job(title, desc):
     text = (str(title) + " " + str(desc)).lower()
-    
-    # 1. Seniority Classification (Entry/Junior, Mid, Senior)
-    if any(x in text for x in ['senior', 'lead', 'principal', 'head of', 'sr.', 'manager', 'iii', 'iv']):
+    # Seniority
+    if any(x in text for x in ['senior', 'lead', 'principal', 'sr.', 'manager']):
         level = "Senior"
-    elif any(x in text for x in ['junior', 'entry', 'graduate', 'intern', 'trainee', 'associate', 'i', 'ii', 'apprentice']):
+    elif any(x in text for x in ['junior', 'entry', 'graduate', 'intern', 'trainee', 'associate']):
         level = "Entry/Junior"
     else:
         level = "Mid"
-    
-    # 2. Work Environment (Remote, Hybrid, Onsite)
-    if any(x in text for x in ['remote', 'work from home', 'wfh', 'anywhere']):
+    # Environment
+    if any(x in text for x in ['remote', 'work from home', 'wfh']):
         env = "Remote"
-    elif any(x in text for x in ['hybrid', 'flexible working', 'split office', '2 days office']):
+    elif any(x in text for x in ['hybrid', 'flexible working']):
         env = "Hybrid"
     else:
         env = "Onsite"
-    
     return level, env
 
-SEARCH_TERMS = ['data analyst', 'junior data analyst', 'data engineer', 'business intelligence', 'reporting analyst', 'data']
+# SHORTER LIST FOR SPEED
+SEARCH_TERMS = ['Data Analyst', 'Data Engineer', 'Business Intelligence']
 
 # --- 2. FETCHERS ---
 def fetch_adzuna():
@@ -69,9 +63,10 @@ def fetch_adzuna():
     results = []
     for term in SEARCH_TERMS:
         url = "https://api.adzuna.com/v1/api/jobs/gb/search/1"
-        params = {'app_id': APP_ID, 'app_key': APP_KEY, 'results_per_page': 50, 'what': term, 'where': 'UK'}
+        # Reduced to 20 results per term for speed
+        params = {'app_id': APP_ID, 'app_key': APP_KEY, 'results_per_page': 20, 'what': term, 'where': 'UK'}
         try:
-            r = requests.get(url, params=params, timeout=10).json().get('results', [])
+            r = requests.get(url, params=params, timeout=5).json().get('results', [])
             for j in r:
                 level, env = classify_job(j.get('title', ''), j.get('description', ''))
                 results.append({
@@ -87,67 +82,73 @@ def fetch_linkedin():
     results = []
     for term in SEARCH_TERMS:
         try:
+            # results_wanted=25 is the "sweet spot" for speed vs quantity
             df = scrape_jobs(site_name=["linkedin"], search_term=term, location="United Kingdom", 
-                             results_wanted=50, hours_old=72, linkedin_fetch_description=True)
+                             results_wanted=25, hours_old=72, linkedin_fetch_description=True)
             for _, row in df.iterrows():
                 level, env = classify_job(row.get('title', ''), row.get('description', ''))
                 results.append({
                     'title': row['title'], 'company': row['company'], 'location': row['location'],
-                    'desc': row['description'], 'url': row['job_url'], 'source': 'LinkedIn',
-                    'env': env, 'level': level, 'deadline': 'NIL'
+                    'desc': row['description'], 'job_url': row['job_url'], 'source': 'LinkedIn',
+                    'env': env, 'level': level
                 })
-            time.sleep(5)
+            time.sleep(2) # Smaller sleep to save time
         except: continue
     return results
 
 # --- 3. MAIN ENGINE ---
 def main():
+    print("📄 Reading Resume...")
     with fitz.open("resume.pdf") as doc:
         resume_text = "".join([p.get_text() for p in doc])
 
     client = get_google_client()
-    sheet = client.open('JobTracker_2026').sheet1
+    # Change this to your exact sheet name
+    sheet = client.open('JobSearch').sheet1 
     
     existing = sheet.get_all_values()
-    if not existing:
-        headers = ["Score", "Title", "Company", "Location", "Distance", "Date Found", "Link", "Source", "Environment", "Seniority", "Deadline"]
-        sheet.append_row(headers)
-        existing_urls = set()
-    else:
-        existing_urls = set([row[6] for row in existing if len(row) > 6])
+    existing_urls = set([row[6] for row in existing if len(row) > 6])
 
-    all_jobs = fetch_adzuna() + fetch_linkedin()
-    geolocator = Nominatim(user_agent="norwich_job_bot_2026")
+    print("🔍 Fetching Adzuna...")
+    adzuna_jobs = fetch_adzuna()
+    print("🔍 Fetching LinkedIn...")
+    linkedin_jobs = fetch_linkedin()
+    
+    all_jobs = adzuna_jobs + linkedin_jobs
+    geolocator = Nominatim(user_agent="job_bot_2026")
     home_coords = (52.6289, 1.2933)
     today = datetime.now().strftime('%Y-%m-%d')
     
     upload_batch = []
     seen_urls = set()
 
+    print(f"🧠 Processing {len(all_jobs)} jobs with AI...")
     for j in all_jobs:
-        if j['url'] in existing_urls or j['url'] in seen_urls: continue
-        seen_urls.add(j['url'])
+        url = j.get('url') or j.get('job_url')
+        if url in existing_urls or url in seen_urls: continue
+        seen_urls.add(url)
 
         score = calculate_match(resume_text, f"{j['title']} {j['desc']}")
         
-        dist = "Unknown"
-        try:
-            loc = geolocator.geocode(f"{str(j['location']).split(',')[0]}, UK", timeout=3)
-            if loc:
-                dist = f"{round(geodesic(home_coords, (loc.latitude, loc.longitude)).miles, 1)} miles"
-        except: pass
+        # Only process distance for high-score jobs to save time!
+        dist = "N/A"
+        if score > 50:
+            try:
+                loc = geolocator.geocode(f"{str(j['location']).split(',')[0]}, UK", timeout=2)
+                if loc:
+                    dist = f"{round(geodesic(home_coords, (loc.latitude, loc.longitude)).miles, 1)}m"
+            except: pass
 
-        # FINAL MAPPING TO 11 COLUMNS
         upload_batch.append([
             score, j['title'], j['company'], j['location'], 
-            dist, today, j['url'], j['source'], 
-            j['env'], j['level'], j['deadline']
+            dist, today, url, j['source'], 
+            j['env'], j['level'], 'NIL'
         ])
 
     if upload_batch:
         upload_batch.sort(key=lambda x: x[0], reverse=True)
         sheet.append_rows(upload_batch)
-        print(f"🚀 Success! Found {len(upload_batch)} new jobs with Seniority & Environment tags.")
+        print(f"🚀 Success! {len(upload_batch)} jobs added.")
 
 if __name__ == "__main__":
     main()
