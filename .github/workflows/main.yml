@@ -9,7 +9,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout Code
         uses: actions/checkout@v4
 
       - name: Set up Python
@@ -23,14 +23,9 @@ jobs:
           ADZUNA_APP_ID: ${{ secrets.ADZUNA_APP_ID }}
           ADZUNA_APP_KEY: ${{ secrets.ADZUNA_APP_KEY }}
         run: |
-          # 1. Upgrade pip
+          # Install everything in one single layer
           python -m pip install --upgrade pip
+          python -m pip install pandas requests gspread google-auth python-jobspy sentence-transformers torch geopy PyMuPDF
           
-          # 2. Install using the CORRECT package name for the 'jobspy' module
-          python -m pip install python-jobspy pandas requests gspread google-auth sentence-transformers torch geopy PyMuPDF
-          
-          # 3. DIAGNOSTIC: List installed packages to be 100% sure
-          python -m pip list | grep jobspy
-          
-          # 4. Run the script
+          # Run the script
           python main_script.py
