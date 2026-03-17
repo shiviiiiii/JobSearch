@@ -1,12 +1,25 @@
+
 import os
+import sys
+import subprocess
+
+# --- EMERGENCY FORCE INSTALL ---
+# This ensures jobspy is installed in the ACTIVE environment at runtime
+try:
+    from jobspy import scrape_jobs
+except ImportError:
+    print("📦 Jobspy not found. Force installing now...")
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "python-jobspy"])
+    from jobspy import scrape_jobs
 import json
+import time
+import fitz  # PyMuPDF
 import time
 import fitz  # PyMuPDF
 import gspread
 import requests
 from google.oauth2.service_account import Credentials
 from sentence_transformers import SentenceTransformer, util
-from jobspy import scrape_jobs
 from geopy.geocoders import Nominatim
 from geopy.distance import geodesic
 from datetime import datetime
