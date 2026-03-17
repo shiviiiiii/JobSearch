@@ -43,7 +43,7 @@ def classify_job(title, desc):
     return level, env
 
 # Use 'data' here as requested
-SEARCH_TERMS = ['data analyst', 'data engineer', 'data']
+SEARCH_TERMS = ['data analyst', 'data engineer']
 
 # --- 2. FETCHERS ---
 def fetch_adzuna():
