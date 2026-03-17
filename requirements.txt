@@ -1,0 +1,7 @@
+python-jobspy
+geopy
+pandas
+pymupdf
+sentence-transformers
+gspread
+google-auth
