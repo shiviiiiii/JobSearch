@@ -70,14 +70,15 @@ def fetch_linkedin():
     for term in SEARCH_TERMS:
         try:
             # We skip 'linkedin_fetch_description=True' to save massive amounts of time
-            df = scrape_jobs(site_name=["linkedin"], search_term=term, location="United Kingdom", 
-                             results_wanted=30, hours_old=48)
-            for _, row in df.iterrows():
-                level, env = classify_job(row.get('title', ''), "")
-                results.append({
-                    'title': row['title'], 'company': row['company'], 'location': row['location'],
-                    'url': row['job_url'], 'source': 'LinkedIn', 'env': env, 'level': level
-                })
+            # Change this line in fetch_linkedin():
+            df = scrape_jobs(
+    site_name=["linkedin"], 
+    search_term=term, 
+    location="United Kingdom", 
+    results_wanted=20, # Reduced slightly for speed
+    hours_old=48,
+    linkedin_fetch_description=False # Forces it to be fast
+)
         except: continue
     return results
 
